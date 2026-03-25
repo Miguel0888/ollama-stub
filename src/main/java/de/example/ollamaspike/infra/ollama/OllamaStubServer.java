@@ -31,6 +31,12 @@ public final class OllamaStubServer {
 
     public void setObserver(StubChatObserver observer) {
         this.observer = observer;
+        System.out.println("Observer gesetzt: " + (observer != null ? observer.getClass().getSimpleName() : "null"));
+
+        // Sofort Test-Nachricht senden, um Verdrahtung zu prüfen
+        if (observer != null) {
+            observer.onSystemMessage("✅ Observer verbunden – Stub lauscht auf Port " + port);
+        }
     }
 
     public void start() {
@@ -38,6 +44,10 @@ public final class OllamaStubServer {
             server = HttpServer.create(new InetSocketAddress(port), 0);
             server.setExecutor(Executors.newCachedThreadPool());
 
+            // Catch-All zuerst – fängt alles ab, was nicht explizit registriert ist
+            server.createContext("/", new CatchAllHandler());
+
+            // Spezifische Endpunkte überschreiben den Catch-All für bekannte Pfade
             server.createContext("/api/tags", new TagsHandler());
             server.createContext("/api/generate", new GenerateHandler());
             server.createContext("/api/chat", new ChatHandler());
@@ -64,9 +74,16 @@ public final class OllamaStubServer {
     // =========================
     // /api/tags
     // =========================
-    private static class TagsHandler implements HttpHandler {
+    private class TagsHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+
+            System.out.println("TAGS abgefragt");
+
+            StubChatObserver obs = observer;
+            if (obs != null) {
+                obs.onSystemMessage("Modelle wurden abgefragt.");
+            }
 
             String json =
                     "{"
@@ -91,7 +108,13 @@ public final class OllamaStubServer {
             String body = read(exchange.getRequestBody());
             boolean stream = isStream(body);
 
-            System.out.println("GENERATE stream=" + stream);
+            System.out.println("=== GENERATE ===");
+            System.out.println("  Method: " + exchange.getRequestMethod());
+            System.out.println("  Path:   " + exchange.getRequestURI());
+            System.out.println("  Headers: " + exchange.getRequestHeaders().entrySet());
+            System.out.println("  stream=" + stream);
+            System.out.println("  Body:   [" + body + "]");
+            System.out.println("================");
 
             // Eingehende User-Nachricht (prompt) extrahieren und Observer benachrichtigen
             String prompt = extractPrompt(body);
@@ -166,7 +189,13 @@ public final class OllamaStubServer {
             String body = read(exchange.getRequestBody());
             boolean stream = isStream(body);
 
-            System.out.println("CHAT stream=" + stream);
+            System.out.println("=== CHAT ===");
+            System.out.println("  Method: " + exchange.getRequestMethod());
+            System.out.println("  Path:   " + exchange.getRequestURI());
+            System.out.println("  Headers: " + exchange.getRequestHeaders().entrySet());
+            System.out.println("  stream=" + stream);
+            System.out.println("  Body:   [" + body + "]");
+            System.out.println("=============");
 
             // Eingehende User-Nachricht extrahieren und Observer benachrichtigen
             String userContent = extractLastUserContent(body);
@@ -237,6 +266,69 @@ public final class OllamaStubServer {
     }
 
     // =========================
+    // Catch-All (alle unbekannten Endpunkte)
+    // =========================
+    private class CatchAllHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            String method = exchange.getRequestMethod();
+            String path = exchange.getRequestURI().toString();
+            String body = read(exchange.getRequestBody());
+
+            System.out.println("=== CATCH-ALL ===");
+            System.out.println("  Method: " + method);
+            System.out.println("  Path:   " + path);
+            System.out.println("  Headers: " + exchange.getRequestHeaders().entrySet());
+            System.out.println("  Body:   [" + body + "]");
+            System.out.println("=================");
+
+            StubChatObserver obs = observer;
+            if (obs != null) {
+                String info = method + " " + path;
+                if (body != null && !body.isEmpty()) {
+                    // Body kürzen für die UI-Anzeige
+                    String shortBody = body.length() > 200
+                            ? body.substring(0, 200) + "..."
+                            : body;
+                    info += "\n" + shortBody;
+                }
+                obs.onSystemMessage("Request: " + info);
+            }
+
+            // Sinnvolle Default-Antworten je nach Pfad
+            String responseJson;
+            if (path.startsWith("/api/version")) {
+                responseJson = "{\"version\":\"0.0.0-stub\"}";
+            } else if (path.startsWith("/api/show")) {
+                responseJson = "{"
+                        + "\"modelfile\":\"stub\","
+                        + "\"parameters\":\"stub\","
+                        + "\"template\":\"{{ .Prompt }}\","
+                        + "\"details\":{\"family\":\"stub\",\"parameter_size\":\"0B\",\"quantization_level\":\"stub\"}"
+                        + "}";
+            } else if (path.startsWith("/api/embeddings") || path.startsWith("/api/embed")) {
+                responseJson = "{\"embedding\":[0.0]}";
+            } else if (path.startsWith("/api/ps")) {
+                responseJson = "{\"models\":[]}";
+            } else if (path.startsWith("/api/pull") || path.startsWith("/api/push") || path.startsWith("/api/delete") || path.startsWith("/api/copy")) {
+                responseJson = "{\"status\":\"success\"}";
+            } else if (path.equals("/")) {
+                responseJson = "Ollama is running (stub)";
+                byte[] bytes = responseJson.getBytes(UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/plain");
+                exchange.sendResponseHeaders(200, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+                return;
+            } else {
+                responseJson = "{\"error\":\"unknown endpoint (stub)\",\"path\":\"" + path + "\"}";
+            }
+
+            sendJson(exchange, responseJson);
+        }
+    }
+
+    // =========================
     // helpers
     // =========================
     private static void sendJson(HttpExchange ex, String body) throws IOException {
@@ -260,7 +352,8 @@ public final class OllamaStubServer {
     }
 
     private static boolean isStream(String body) {
-        return body != null && body.contains("\"stream\":true");
+        return body != null
+                && (body.contains("\"stream\":true") || body.contains("\"stream\": true"));
     }
 
     /**

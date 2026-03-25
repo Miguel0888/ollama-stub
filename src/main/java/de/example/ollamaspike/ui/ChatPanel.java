@@ -136,14 +136,25 @@ public final class ChatPanel extends JPanel implements StubChatObserver {
     }
 
     private void appendMessage(ChatMessage message) {
-        String title = message.getRole() == ChatRole.USER ? "👤 Du:" : "🤖 Bot:";
-        Color backgroundColor = message.getRole() == ChatRole.USER
-                ? new Color(230, 240, 255)
-                : new Color(240, 255, 230);
+        String title;
+        Color backgroundColor;
+        if (message.getRole() == ChatRole.USER) {
+            title = "👤 Du:";
+            backgroundColor = new Color(230, 240, 255);
+        } else if (message.getRole() == ChatRole.SYSTEM) {
+            title = "⚙ System:";
+            backgroundColor = new Color(255, 255, 210);
+        } else {
+            title = "🤖 Bot:";
+            backgroundColor = new Color(240, 255, 230);
+        }
+
+        System.out.println("[ChatPanel] appendMessage: role=" + message.getRole() + " text=" + message.getText());
 
         messageContainer.add(new ChatBubble(title, message.getText(), backgroundColor));
         messageContainer.add(Box.createVerticalStrut(6));
         messageContainer.revalidate();
+        messageContainer.repaint();
         scrollToBottom();
     }
 
@@ -165,6 +176,7 @@ public final class ChatPanel extends JPanel implements StubChatObserver {
 
     @Override
     public void onUserMessageReceived(final String message) {
+        System.out.println("[ChatPanel.onUserMessageReceived] " + message);
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -175,6 +187,7 @@ public final class ChatPanel extends JPanel implements StubChatObserver {
 
     @Override
     public void onAssistantMessageSent(final String message) {
+        System.out.println("[ChatPanel.onAssistantMessageSent] " + message);
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -185,9 +198,11 @@ public final class ChatPanel extends JPanel implements StubChatObserver {
 
     @Override
     public void onSystemMessage(final String message) {
+        System.out.println("[ChatPanel.onSystemMessage] " + message);
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
+                appendMessage(new ChatMessage(ChatRole.SYSTEM, message));
                 statusLabel.setText(message);
             }
         });
