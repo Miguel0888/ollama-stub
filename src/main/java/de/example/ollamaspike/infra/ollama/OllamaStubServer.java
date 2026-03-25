@@ -109,41 +109,27 @@ public final class OllamaStubServer {
             }
 
             chatObserver.onUserMessageReceived(userMessage);
-
-            Headers headers = exchange.getResponseHeaders();
-            headers.set("Content-Type", "application/x-ndjson; charset=utf-8");
-
-            exchange.sendResponseHeaders(200, 0); // streaming
-
-            OutputStream os = exchange.getResponseBody();
-
-            try {
-                // first chunk
-                writeChunk(os, false);
-
-                // final chunk
-                writeChunk(os, true);
-
-                os.flush();
-            } finally {
-                os.close();
-            }
-
             chatObserver.onAssistantMessageSent(STUB_RESPONSE);
-        }
 
-        private void writeChunk(OutputStream os, boolean done) throws IOException {
-            String chunk =
+            String responseBody =
                     "{"
                             + "\"model\":\"" + INSTALLED_MODEL + "\","
+                            + "\"created_at\":\"2026-03-25T00:00:00Z\","
                             + "\"message\":{"
                             + "\"role\":\"assistant\","
                             + "\"content\":\"" + escapeJson(STUB_RESPONSE) + "\""
                             + "},"
-                            + "\"done\":" + done
-                            + "}\n";
+                            + "\"done\":true,"
+                            + "\"done_reason\":\"stop\","
+                            + "\"total_duration\":0,"
+                            + "\"load_duration\":0,"
+                            + "\"prompt_eval_count\":0,"
+                            + "\"prompt_eval_duration\":0,"
+                            + "\"eval_count\":0,"
+                            + "\"eval_duration\":0"
+                            + "}";
 
-            os.write(chunk.getBytes(UTF_8));
+            sendJson(exchange, 200, responseBody);
         }
     }
 
