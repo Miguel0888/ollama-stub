@@ -5,15 +5,20 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
-import java.io.IOException;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.InetSocketAddress;
+import java.nio.charset.Charset;
 import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class OllamaStubServer {
 
+    private static final Charset UTF_8 = Charset.forName("UTF-8");
+    private static final String MODEL = "gpt-oss:20b";
+
     private final int port;
-    private HttpServer httpServer;
+    private HttpServer server;
 
     public OllamaStubServer(int port) {
         this.port = port;
@@ -21,21 +26,25 @@ public final class OllamaStubServer {
 
     public void start() {
         try {
-            httpServer = HttpServer.create(new InetSocketAddress(port), 0);
-            httpServer.createContext("/api/version", new StaticJsonHandler("{\"version\":\"0.0.0-stub\"}"));
-            httpServer.createContext("/api/tags", new StaticJsonHandler(createTagsResponse()));
-            httpServer.createContext("/api/show", new StaticJsonHandler("{\"modelfile\":\"FROM gpt-oss:20b\",\"parameters\":\"\"}"));
-            httpServer.createContext("/api/chat", new StaticJsonHandler(createChatResponse()));
-            httpServer.setExecutor(Executors.newCachedThreadPool());
-            httpServer.start();
-        } catch (IOException exception) {
-            throw new IllegalStateException("Could not start Ollama stub server on port " + port, exception);
+            server = HttpServer.create(new InetSocketAddress(port), 0);
+            server.setExecutor(Executors.newCachedThreadPool());
+
+            server.createContext("/api/tags", new TagsHandler());
+            server.createContext("/api/chat", new ChatHandler());
+            server.createContext("/api/generate", new GenerateHandler());
+
+            server.start();
+
+            System.out.println("Stub läuft auf http://localhost:" + port);
+
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
     }
 
     public void stop() {
-        if (httpServer != null) {
-            httpServer.stop(0);
+        if (server != null) {
+            server.stop(0);
         }
     }
 
@@ -43,57 +52,157 @@ public final class OllamaStubServer {
         return "http://localhost:" + port;
     }
 
-    private String createTagsResponse() {
-        return "{"
-                + "\"models\":[{"
-                + "\"name\":\"gpt-oss:20b\"," 
-                + "\"model\":\"gpt-oss:20b\"," 
-                + "\"modified_at\":\"2026-03-25T12:00:00Z\"," 
-                + "\"size\":21474836480," 
-                + "\"digest\":\"stub-digest\"," 
-                + "\"details\":{"
-                + "\"format\":\"gguf\"," 
-                + "\"family\":\"gpt-oss\"," 
-                + "\"parameter_size\":\"20B\"," 
-                + "\"quantization_level\":\"Q4_K_M\""
-                + "}"
-                + "}]"
-                + "}";
-    }
+    private static String extractPrompt(String body) {
+        Pattern p = Pattern.compile("\"prompt\"\\s*:\\s*\"(.*?)\"");
+        Matcher m = p.matcher(body);
 
-    private String createChatResponse() {
-        return "{"
-                + "\"model\":\"gpt-oss:20b\"," 
-                + "\"created_at\":\"2026-03-25T12:00:00Z\"," 
-                + "\"message\":{"
-                + "\"role\":\"assistant\"," 
-                + "\"content\":\"Verstanden!\""
-                + "},"
-                + "\"done\":true"
-                + "}";
-    }
-
-    private static final class StaticJsonHandler implements HttpHandler {
-
-        private final String responseBody;
-
-        private StaticJsonHandler(String responseBody) {
-            this.responseBody = responseBody;
+        if (m.find()) {
+            return m.group(1);
         }
+        return "";
+    }
+    
+    // -------------------------
+    // /api/tags
+    // -------------------------
+    private static class TagsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+
+            String response =
+                    "{"
+                            + "\"models\":[{"
+                            + "\"name\":\"" + MODEL + "\","
+                            + "\"model\":\"" + MODEL + "\""
+                            + "}]"
+                            + "}";
+
+            byte[] bytes = response.getBytes(UTF_8);
+
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+
+            OutputStream os = exchange.getResponseBody();
+            os.write(bytes);
+            os.close();
+        }
+    }
+
+    // -------------------------
+    // /api/chat (WICHTIG!)
+    // -------------------------
+    private static class ChatHandler implements HttpHandler {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+
+            String body = read(exchange.getRequestBody());
+            String userMessage = extractLastMessage(body);
+
+            System.out.println("CLIENT: " + userMessage);
+
             Headers headers = exchange.getResponseHeaders();
-            headers.add("Content-Type", "application/json; charset=UTF-8");
-            byte[] payload = responseBody.getBytes("UTF-8");
-            exchange.sendResponseHeaders(200, payload.length);
-            OutputStream outputStream = exchange.getResponseBody();
+            headers.set("Content-Type", "application/x-ndjson");
+
+            // VERY IMPORTANT: streaming response
+            exchange.sendResponseHeaders(200, 0);
+
+            OutputStream os = exchange.getResponseBody();
+
             try {
-                outputStream.write(payload);
-                outputStream.flush();
+                // chunk 1
+                writeChunk(os, false);
+
+                // chunk 2 (done)
+                writeChunk(os, true);
+
+                os.flush();
             } finally {
-                outputStream.close();
+                os.close();
             }
+
+            System.out.println("STUB: Verstanden!");
         }
+
+        private void writeChunk(OutputStream os, boolean done) throws IOException {
+
+            String json =
+                    "{"
+                            + "\"model\":\"" + MODEL + "\","
+                            + "\"message\":{"
+                            + "\"role\":\"assistant\","
+                            + "\"content\":\"Verstanden!\""
+                            + "},"
+                            + "\"done\":" + done
+                            + "}\n";
+
+            os.write(json.getBytes(UTF_8));
+        }
+    }
+
+    private static class GenerateHandler implements HttpHandler {
+
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+
+            String requestBody = read(exchange.getRequestBody());
+            String prompt = extractPrompt(requestBody);
+
+            System.out.println("CLIENT: " + prompt);
+
+            Headers headers = exchange.getResponseHeaders();
+            headers.set("Content-Type", "application/x-ndjson");
+
+            exchange.sendResponseHeaders(200, 0);
+
+            OutputStream os = exchange.getResponseBody();
+
+            try {
+                writeChunk(os, false);
+                writeChunk(os, true);
+                os.flush();
+            } finally {
+                os.close();
+            }
+
+            System.out.println("STUB: Verstanden!");
+        }
+
+        private void writeChunk(OutputStream os, boolean done) throws IOException {
+
+            String json =
+                    "{"
+                            + "\"model\":\"gpt-oss:20b\","
+                            + "\"response\":\"Verstanden!\","
+                            + "\"done\":" + done
+                            + "}\n";
+
+            os.write(json.getBytes(Charset.forName("UTF-8")));
+        }
+    }
+
+    // -------------------------
+    // helper
+    // -------------------------
+    private static String read(InputStream is) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buf = new byte[1024];
+        int r;
+        while ((r = is.read(buf)) != -1) {
+            out.write(buf, 0, r);
+        }
+        return new String(out.toByteArray(), UTF_8);
+    }
+
+    private static String extractLastMessage(String body) {
+        Pattern p = Pattern.compile("\"content\"\\s*:\\s*\"(.*?)\"");
+        Matcher m = p.matcher(body);
+
+        String last = null;
+        while (m.find()) {
+            last = m.group(1);
+        }
+
+        return last != null ? last : "";
     }
 }
