@@ -83,7 +83,7 @@ public final class OllamaStubServer {
     // =========================
     // /api/generate
     // =========================
-    private static class GenerateHandler implements HttpHandler {
+    private class GenerateHandler implements HttpHandler {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -93,10 +93,26 @@ public final class OllamaStubServer {
 
             System.out.println("GENERATE stream=" + stream);
 
+            // Eingehende User-Nachricht (prompt) extrahieren und Observer benachrichtigen
+            String prompt = extractPrompt(body);
+            if (prompt != null) {
+                System.out.println("USER (generate): " + prompt);
+                StubChatObserver obs = observer;
+                if (obs != null) {
+                    obs.onUserMessageReceived(prompt);
+                }
+            }
+
             if (stream) {
                 streamGenerate(exchange);
             } else {
                 singleGenerate(exchange);
+            }
+
+            // Observer über die Antwort informieren
+            StubChatObserver obs = observer;
+            if (obs != null) {
+                obs.onAssistantMessageSent(RESPONSE);
             }
         }
 
@@ -245,6 +261,25 @@ public final class OllamaStubServer {
 
     private static boolean isStream(String body) {
         return body != null && body.contains("\"stream\":true");
+    }
+
+    /**
+     * Extrahiert den "prompt"-Wert aus dem /api/generate Request-Body.
+     * Erwartet JSON mit "prompt":"..."
+     */
+    static String extractPrompt(String body) {
+        if (body == null) {
+            return null;
+        }
+        Pattern p = Pattern.compile("\"prompt\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+        Matcher m = p.matcher(body);
+        if (m.find()) {
+            return m.group(1)
+                    .replace("\\n", "\n")
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\");
+        }
+        return null;
     }
 
     /**
