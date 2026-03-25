@@ -23,9 +23,14 @@ public final class OllamaStubServer {
 
     private final int port;
     private HttpServer server;
+    private volatile StubChatObserver observer;
 
     public OllamaStubServer(int port) {
         this.port = port;
+    }
+
+    public void setObserver(StubChatObserver observer) {
+        this.observer = observer;
     }
 
     public void start() {
@@ -137,7 +142,7 @@ public final class OllamaStubServer {
     // =========================
     // /api/chat
     // =========================
-    private static class ChatHandler implements HttpHandler {
+    private class ChatHandler implements HttpHandler {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -147,10 +152,26 @@ public final class OllamaStubServer {
 
             System.out.println("CHAT stream=" + stream);
 
+            // Eingehende User-Nachricht extrahieren und Observer benachrichtigen
+            String userContent = extractLastUserContent(body);
+            if (userContent != null) {
+                System.out.println("USER: " + userContent);
+                StubChatObserver obs = observer;
+                if (obs != null) {
+                    obs.onUserMessageReceived(userContent);
+                }
+            }
+
             if (stream) {
                 streamChat(exchange);
             } else {
                 singleChat(exchange);
+            }
+
+            // Observer über die Antwort informieren
+            StubChatObserver obs = observer;
+            if (obs != null) {
+                obs.onAssistantMessageSent(RESPONSE);
             }
         }
 
@@ -224,5 +245,38 @@ public final class OllamaStubServer {
 
     private static boolean isStream(String body) {
         return body != null && body.contains("\"stream\":true");
+    }
+
+    /**
+     * Extrahiert den Inhalt der letzten User-Nachricht aus dem /api/chat Request-Body.
+     * Erwartet JSON mit "messages":[{"role":"user","content":"..."},...]
+     */
+    static String extractLastUserContent(String body) {
+        if (body == null) {
+            return null;
+        }
+        Pattern p = Pattern.compile(
+                "\"role\"\\s*:\\s*\"user\"[^}]*?\"content\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+        Matcher m = p.matcher(body);
+        String last = null;
+        while (m.find()) {
+            last = m.group(1);
+        }
+        if (last == null) {
+            // Fallback: content kann vor role stehen
+            Pattern p2 = Pattern.compile(
+                    "\"content\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"[^}]*?\"role\"\\s*:\\s*\"user\"");
+            Matcher m2 = p2.matcher(body);
+            while (m2.find()) {
+                last = m2.group(1);
+            }
+        }
+        if (last != null) {
+            return last
+                    .replace("\\n", "\n")
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\");
+        }
+        return null;
     }
 }

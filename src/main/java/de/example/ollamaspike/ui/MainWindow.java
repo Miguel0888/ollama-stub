@@ -28,8 +28,14 @@ public final class MainWindow {
         List<InstalledModel> installedModels = ollamaApiClient.fetchInstalledModels();
         String[] modelNames = extractModelNames(installedModels);
 
+        ChatPanel chatPanel = new ChatPanel(sendChatMessageUseCase, modelNames);
+
+        // ChatPanel als Observer am StubServer registrieren,
+        // damit eingehende Nachrichten von MainframeMate angezeigt werden
+        stubServer.setObserver(chatPanel);
+
         JTabbedPane tabs = new JTabbedPane();
-        tabs.addTab("💬 chat-1", new ChatPanel(sendChatMessageUseCase, modelNames));
+        tabs.addTab("💬 chat-1", chatPanel);
         tabs.addTab("＋", createAddTabPlaceholder());
 
         frame.add(createInfoPanel(stubServer.getBaseUrl(), modelNames), BorderLayout.NORTH);

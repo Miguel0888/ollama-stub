@@ -2,6 +2,7 @@ package de.example.ollamaspike.ui;
 
 import de.example.ollamaspike.domain.ChatMessage;
 import de.example.ollamaspike.domain.ChatRole;
+import de.example.ollamaspike.infra.ollama.StubChatObserver;
 import de.example.ollamaspike.usecase.SendChatMessageUseCase;
 
 import javax.swing.BorderFactory;
@@ -23,7 +24,7 @@ import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 
-public final class ChatPanel extends JPanel {
+public final class ChatPanel extends JPanel implements StubChatObserver {
 
     private final JPanel messageContainer;
     private final JTextArea inputArea;
@@ -154,6 +155,40 @@ public final class ChatPanel extends JPanel {
                     javax.swing.JViewport viewport = (javax.swing.JViewport) messageContainer.getParent();
                     viewport.setViewPosition(new java.awt.Point(0, Math.max(0, messageContainer.getHeight())));
                 }
+            }
+        });
+    }
+
+    // =========================
+    // StubChatObserver – Nachrichten von MainframeMate anzeigen
+    // =========================
+
+    @Override
+    public void onUserMessageReceived(final String message) {
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                appendMessage(new ChatMessage(ChatRole.USER, message));
+            }
+        });
+    }
+
+    @Override
+    public void onAssistantMessageSent(final String message) {
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                appendMessage(new ChatMessage(ChatRole.ASSISTANT, message));
+            }
+        });
+    }
+
+    @Override
+    public void onSystemMessage(final String message) {
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                statusLabel.setText(message);
             }
         });
     }
